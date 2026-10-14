@@ -133,10 +133,11 @@ public class UtilsTest
         for (int k = 0; k != PQ.length; k++)
         {
             int q = PQ[k][1], half = (q - 1) / 2;
-            int[] xs = { 1, -1, 2, 3, -3, 1000, half, -half };
-            for (int i = 0; i != xs.length; i++)
+            for (int x = -half; x <= half; x++)
             {
-                assertEquals(1, centredMod((long)xs[i] * Utils.getInverseInRQ(xs[i], q), q));
+                int inv = Utils.getInverseInRQ(x, q);
+                assertTrue(inv >= -half && inv <= half);
+                assertEquals("x = " + x + ", q = " + q, x == 0 ? 0 : 1, centredMod((long)x * inv, q));
             }
         }
     }
@@ -171,6 +172,22 @@ public class UtilsTest
         for (int k = 0; k != PQ.length; k++)
         {
             int p = PQ[k][0];
+
+            // 0 has no inverse, and the constants 1 and -1 are their own
+            byte[] constant = new byte[p];
+            byte[] constantInv = new byte[p];
+            assertFalse(Utils.isInvertiblePolynomialInR3(constant, constantInv, p));
+
+            for (int c = -1; c <= 1; c += 2)
+            {
+                constant[0] = (byte)c;
+                assertTrue(Utils.isInvertiblePolynomialInR3(constant, constantInv, p));
+                assertEquals(c, constantInv[0]);
+                for (int i = 1; i < p; i++)
+                {
+                    assertEquals(0, constantInv[i]);
+                }
+            }
 
             int found = 0;
             for (int trial = 0; trial < 4; trial++)

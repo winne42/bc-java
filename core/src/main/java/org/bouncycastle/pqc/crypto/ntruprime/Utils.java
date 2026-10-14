@@ -58,6 +58,14 @@ class Utils
         return r - ((n - 1) / 2);
     }
 
+    /**
+     * Return x mod 3 in {-1, 0, 1} for x in [-2, 2], without branches.
+     */
+    private static int getSmallModFreeze3(int x)
+    {
+        return x + 3 * (((1 - x) >> 31) - ((x + 1) >> 31));
+    }
+
     protected static boolean isInvertiblePolynomialInR3(byte[] g, byte[] ginv, int p)
     {
         byte[] f = new byte[p + 1];
@@ -96,10 +104,11 @@ class Utils
                 r[i] ^= t;
             }
 
+            // g is small, so f, h, r, v and sign all stay in {-1, 0, 1} and the sums in [-2, 2]
             for (i = 0; i < p + 1; i++)
-                h[i] = (byte)getModFreeze(h[i] + sign * f[i], 3, BARRETT_3);
+                h[i] = (byte)getSmallModFreeze3(h[i] + sign * f[i]);
             for (i = 0; i < p + 1; i++)
-                r[i] = (byte)getModFreeze(r[i] + sign * v[i], 3, BARRETT_3);
+                r[i] = (byte)getSmallModFreeze3(r[i] + sign * v[i]);
 
             for (i = 0; i < p; i++)
                 h[i] = h[i+1];
@@ -171,10 +180,21 @@ class Utils
 
     protected static int getInverseInRQ(int x, int q)
     {
+        // x^(q - 2) by square-and-multiply: the exponent is public, so the sequence of operations depends on q alone
         long barrett = getBarrettFactor(q);
+        int e = q - 2, bit = 0;
+        while ((e >>> bit) > 1)
+            bit++;
+
         int ai = x;
-        for (int i = 1; i < q - 2; i++)
-            ai = getModFreeze(x * ai, q, barrett);
+        while (--bit >= 0)
+        {
+            ai = getModFreeze(ai * ai, q, barrett);
+            if (((e >>> bit) & 1) != 0)
+            {
+                ai = getModFreeze(ai * x, q, barrett);
+            }
+        }
         return ai;
     }
 
