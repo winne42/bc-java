@@ -32,7 +32,8 @@ public class BLS12_381Pairing
      * {@code (p^6 - 1) * (p^2 + 1) * (p^4 - p^2 + 1) / r}; the easy part
      * computes {@code f^((p^6 - 1)(p^2 + 1))} essentially for free using
      * conjugation and one Frobenius&sup2; application, leaving only this
-     * shorter exponent for {@link Fp12Element#modPow}.
+     * shorter exponent, which {@link #hardPart} applies by an addition chain
+     * in x (kept for the tests that check that chain against a direct power).
      */
     public static final BigInteger HARD_EXPONENT = Fp2Element.P.pow(4)
         .subtract(Fp2Element.P.pow(2))
@@ -183,11 +184,11 @@ public class BLS12_381Pairing
      * construction (the curve parameterisation requires it for
      * {@code p(x)} to have integer coefficients), so the {@code /3}
      * collapses into a precomputable ~126-bit integer that is applied
-     * via a single {@link Fp12Element#modPow} on {@link #X_MINUS_1_SQ_OVER_3}.
+     * via a single cyclotomic power by {@link #X_MINUS_1_SQ_OVER_3}.
      * The remaining structure is the same as before, but the final
      * {@code +3} becomes {@code +1}, so we multiply by {@code f} rather
      * than {@code f^3}. Net cost is slightly higher than the cube-factored
-     * variant (~126-bit modPow replaces three exp-by-|x| ops + a square)
+     * variant (a ~126-bit power replaces three exp-by-|x| ops + a square)
      * but produces a pairing value byte-comparable against any other
      * BLS12-381 implementation (blst, mcl, zkcrypto, …).
      */
@@ -205,13 +206,17 @@ public class BLS12_381Pairing
      * to the easy/hard split for KAT comparison against reference outputs).
      * Not part of the intended public API of this class — production callers
      * should use {@link #pair} / {@link #multiPair}.
+     * <p>
+     * {@code f} must lie in the cyclotomic subgroup, as the output of the easy
+     * part does: every power here squares with
+     * {@code Fp12Element.cyclotomicSquare}, which is wrong outside it.
      */
     public static Fp12Element hardPart(Fp12Element f)
     {
-        // g0 = f^((x - 1)^2 / 3), via a direct ~126-bit modPow. This is
+        // g0 = f^((x - 1)^2 / 3), via a direct ~126-bit power. This is
         // the only step that differs from the 3*hard variant; it replaces
         // f^((x - 1)^2) and absorbs the /3.
-        Fp12Element g0 = f.modPow(X_MINUS_1_SQ_OVER_3);
+        Fp12Element g0 = f.cyclotomicPow(X_MINUS_1_SQ_OVER_3);
 
         // g1 = g0^(x + p) = g0^x * g0^p.
         Fp12Element g1 = expByX(g0).mul(g0.frobenius());
@@ -230,7 +235,7 @@ public class BLS12_381Pairing
      */
     private static Fp12Element expByX(Fp12Element f)
     {
-        return f.modPow(ABS_X).conjugate();
+        return f.cyclotomicPow(ABS_X).conjugate();
     }
 
     /**

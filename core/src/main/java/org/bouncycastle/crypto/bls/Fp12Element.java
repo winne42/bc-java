@@ -120,6 +120,73 @@ public final class Fp12Element
     }
 
     /**
+     * Squaring for elements of the cyclotomic subgroup {@code G_Phi6(p^2)}
+     * (where every value of the final exponentiation's hard part lives), by
+     * Granger and Scott, "Faster Squaring in the Cyclotomic Subgroup of Sixth
+     * Degree Extensions" (PKC 2010): viewing the element as three Fp^4 values,
+     * nine Fp^2 squarings instead of the eighteen Fp^2 multiplications of
+     * {@link #square()}. The result is wrong for elements outside that subgroup.
+     */
+    Fp12Element cyclotomicSquare()
+    {
+        Fp2Element z0 = c0.c0(), z4 = c0.c1(), z3 = c0.c2();
+        Fp2Element z2 = c1.c0(), z1 = c1.c1(), z5 = c1.c2();
+
+        Fp2Element[] a = fp4Square(z0, z1);
+        Fp2Element[] b = fp4Square(z2, z3);
+        Fp2Element[] c = fp4Square(z4, z5);
+
+        // z = 3 * t - 2 * z (for the "real" halves) or 3 * t + 2 * z (for the "imaginary" halves).
+        z0 = triplePlusTwice(a[0], z0.neg());
+        z1 = triplePlusTwice(a[1], z1);
+        z4 = triplePlusTwice(b[0], z4.neg());
+        z5 = triplePlusTwice(b[1], z5);
+        z2 = triplePlusTwice(c[1].mulByNonResidue(), z2);
+        z3 = triplePlusTwice(c[0], z3.neg());
+
+        return new Fp12Element(Fp6Element.of(z0, z4, z3), Fp6Element.of(z2, z1, z5));
+    }
+
+    /** {@code 3t + 2z}. */
+    private static Fp2Element triplePlusTwice(Fp2Element t, Fp2Element z)
+    {
+        Fp2Element s = t.add(z);
+        return s.add(s).add(t);
+    }
+
+    /**
+     * Squares {@code a + b*s} in {@code Fp^4 = Fp^2[s] / (s^2 - xi)}, xi = 1 + I:
+     * {@code (a^2 + xi*b^2) + ((a + b)^2 - a^2 - b^2) * s}, three Fp^2 squarings.
+     */
+    private static Fp2Element[] fp4Square(Fp2Element a, Fp2Element b)
+    {
+        Fp2Element t0 = a.square();
+        Fp2Element t1 = b.square();
+        Fp2Element c0 = t1.mulByNonResidue().add(t0);
+        Fp2Element c1 = a.add(b).square().sub(t0).sub(t1);
+        return new Fp2Element[]{ c0, c1 };
+    }
+
+    /**
+     * {@code this^e} for {@code this} in the cyclotomic subgroup and
+     * {@code e >= 0}, by left-to-right square-and-multiply with
+     * {@link #cyclotomicSquare()}.
+     */
+    Fp12Element cyclotomicPow(BigInteger e)
+    {
+        Fp12Element result = ONE;
+        for (int i = e.bitLength() - 1; i >= 0; --i)
+        {
+            result = result.cyclotomicSquare();
+            if (e.testBit(i))
+            {
+                result = result.mul(this);
+            }
+        }
+        return result;
+    }
+
+    /**
      * Squaring via complex-style: (a0 + a1*w)^2 = (a0+a1)(a0+a1*v) - a0*a1 - a0*a1*v + 2*a0*a1*w.
      * Three Fp^6 multiplications versus four for the Karatsuba product.
      */
