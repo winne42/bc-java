@@ -256,4 +256,44 @@ public class BLS12_381G2HashToCurveTest
         // (2, 1): sign_0=0, zero_0=0, sign_1=1 -> 0
         assertEquals(0, Fp2Element.of(2, 1).sgn0());
     }
+
+    /**
+     * The Fp-based square root used by map-to-curve: for squares it returns a
+     * root of w, otherwise a root of Z*w, and its verdict agrees with the
+     * independent {@link Fp2Element#isSquare}. Covers the purely real inputs
+     * (square and non-square in Fp, so the root may be purely imaginary), zero,
+     * purely imaginary inputs and random ones.
+     */
+    public void testSqrtOrSqrtZ()
+    {
+        BigInteger p = Fp2Element.P;
+        Fp2Element z = Fp2Element.of(-2, -1);
+        java.security.SecureRandom rng = new java.security.SecureRandom(new byte[]{ 5 });
+        Fp2Element[] inputs = new Fp2Element[48];
+        inputs[0] = Fp2Element.ZERO;
+        inputs[1] = Fp2Element.ONE;
+        inputs[2] = Fp2Element.of(4, 0);
+        inputs[3] = Fp2Element.of(-1, 0);
+        inputs[4] = Fp2Element.of(-4, 0);
+        inputs[5] = Fp2Element.of(0, 1);
+        inputs[6] = Fp2Element.of(0, 2);
+        inputs[7] = Fp2Element.of(p.subtract(BigInteger.ONE), p.subtract(BigInteger.ONE));
+        for (int i = 8; i < inputs.length; ++i)
+        {
+            BigInteger a = new BigInteger(p.bitLength(), rng).mod(p);
+            BigInteger b = i < 16 ? BigInteger.ZERO : new BigInteger(p.bitLength(), rng).mod(p);
+            inputs[i] = Fp2Element.of(a, b);
+        }
+        int squares = 0;
+        for (int i = 0; i < inputs.length; ++i)
+        {
+            Fp2Element w = inputs[i];
+            Fp2Element[] root = new Fp2Element[1];
+            boolean isSquare = BLS12_381G2HashToCurve.sqrtOrSqrtZ(w, root);
+            assertEquals("square verdict for " + w, w.isSquare() || w.isZero(), isSquare);
+            assertEquals("root for " + w, isSquare ? w : z.mul(w), root[0].square());
+            squares += isSquare ? 1 : 0;
+        }
+        assertTrue(squares > 0 && squares < inputs.length);
+    }
 }
