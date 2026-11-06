@@ -49,6 +49,12 @@ public final class Fp2Element
         return new Fp2Element(c0.mod(P), c1.mod(P));
     }
 
+    /** Wraps components already in {@code [0, p)}, without reducing them. */
+    static Fp2Element ofReduced(BigInteger c0, BigInteger c1)
+    {
+        return new Fp2Element(c0, c1);
+    }
+
     public static Fp2Element of(long c0, long c1)
     {
         return of(BigInteger.valueOf(c0), BigInteger.valueOf(c1));

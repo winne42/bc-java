@@ -126,19 +126,48 @@ public final class Fp6Element
      */
     public Fp6Element mul(Fp6Element other)
     {
-        Fp2Element a0b0 = c0.mul(other.c0);
-        Fp2Element a1b1 = c1.mul(other.c1);
-        Fp2Element a2b2 = c2.mul(other.c2);
+        return reduce(mulWide(other));
+    }
 
-        Fp2Element t1 = c1.add(c2).mul(other.c1.add(other.c2)).sub(a1b1).sub(a2b2);
-        Fp2Element t2 = c0.add(c1).mul(other.c0.add(other.c1)).sub(a0b0).sub(a1b1);
-        Fp2Element t3 = c0.add(c2).mul(other.c0.add(other.c2)).sub(a0b0).sub(a2b2);
+    /**
+     * {@link #mul} without the final reduction: lazy reduction, the six Fp^2
+     * products stay unreduced and are reduced once per output coefficient (6 Fp
+     * reductions instead of 12), or not at all here when the caller sums
+     * further before reducing.
+     */
+    Fp2Wide[] mulWide(Fp6Element other)
+    {
+        Fp2Wide a0b0 = Fp2Wide.mul(c0, other.c0);
+        Fp2Wide a1b1 = Fp2Wide.mul(c1, other.c1);
+        Fp2Wide a2b2 = Fp2Wide.mul(c2, other.c2);
 
-        Fp2Element new0 = a0b0.add(t1.mulByNonResidue());
-        Fp2Element new1 = t2.add(a2b2.mulByNonResidue());
-        Fp2Element new2 = t3.add(a1b1);
+        Fp2Wide t1 = Fp2Wide.mul(c1.add(c2), other.c1.add(other.c2)).sub(a1b1).sub(a2b2);
+        Fp2Wide t2 = Fp2Wide.mul(c0.add(c1), other.c0.add(other.c1)).sub(a0b0).sub(a1b1);
+        Fp2Wide t3 = Fp2Wide.mul(c0.add(c2), other.c0.add(other.c2)).sub(a0b0).sub(a2b2);
 
-        return new Fp6Element(new0, new1, new2);
+        return new Fp2Wide[]{ a0b0.add(t1.mulByNonResidue()), t2.add(a2b2.mulByNonResidue()), t3.add(a1b1) };
+    }
+
+    /** Reduces an unreduced Fp^6 value, one reduction per Fp coefficient. */
+    static Fp6Element reduce(Fp2Wide[] w)
+    {
+        return new Fp6Element(w[0].reduce(), w[1].reduce(), w[2].reduce());
+    }
+
+    /** {@code w[0] + w[1]*v + w[2]*v^2} times v, unreduced: {@code (xi*w[2], w[0], w[1])}. */
+    static Fp2Wide[] mulByV(Fp2Wide[] w)
+    {
+        return new Fp2Wide[]{ w[2].mulByNonResidue(), w[0], w[1] };
+    }
+
+    static Fp2Wide[] add(Fp2Wide[] a, Fp2Wide[] b)
+    {
+        return new Fp2Wide[]{ a[0].add(b[0]), a[1].add(b[1]), a[2].add(b[2]) };
+    }
+
+    static Fp2Wide[] sub(Fp2Wide[] a, Fp2Wide[] b)
+    {
+        return new Fp2Wide[]{ a[0].sub(b[0]), a[1].sub(b[1]), a[2].sub(b[2]) };
     }
 
     /**
@@ -163,7 +192,7 @@ public final class Fp6Element
     }
 
     /**
-     * Multiplies by the sparse element {@code b0 + b1*v}: five Fp^2
+     * Multiplies by the sparse element {@code b0 + b1*v}, unreduced: five Fp^2
      * multiplications instead of six.
      * <pre>
      *   c0 = a0*b0 + a2*b1*xi
@@ -171,22 +200,22 @@ public final class Fp6Element
      *   c2 = a1*b1 + a2*b0
      * </pre>
      */
-    Fp6Element mulBy01(Fp2Element b0, Fp2Element b1)
+    Fp2Wide[] mulBy01Wide(Fp2Element b0, Fp2Element b1)
     {
-        Fp2Element t0 = c0.mul(b0);
-        Fp2Element t1 = c1.mul(b1);
-        Fp2Element new0 = t0.add(c2.mul(b1).mulByNonResidue());
-        Fp2Element new1 = c0.add(c1).mul(b0.add(b1)).sub(t0).sub(t1);
-        Fp2Element new2 = t1.add(c2.mul(b0));
-        return new Fp6Element(new0, new1, new2);
+        Fp2Wide t0 = Fp2Wide.mul(c0, b0);
+        Fp2Wide t1 = Fp2Wide.mul(c1, b1);
+        return new Fp2Wide[]{
+            t0.add(Fp2Wide.mul(c2, b1).mulByNonResidue()),
+            Fp2Wide.mul(c0.add(c1), b0.add(b1)).sub(t0).sub(t1),
+            t1.add(Fp2Wide.mul(c2, b0)) };
     }
 
     /**
-     * Multiplies by the sparse element {@code b1*v}: three Fp^2 multiplications.
+     * Multiplies by the sparse element {@code b1*v}, unreduced: three Fp^2 multiplications.
      */
-    Fp6Element mulBy1(Fp2Element b1)
+    Fp2Wide[] mulBy1Wide(Fp2Element b1)
     {
-        return new Fp6Element(c2.mul(b1).mulByNonResidue(), c0.mul(b1), c1.mul(b1));
+        return new Fp2Wide[]{ Fp2Wide.mul(c2, b1).mulByNonResidue(), Fp2Wide.mul(c0, b1), Fp2Wide.mul(c1, b1) };
     }
 
     /**

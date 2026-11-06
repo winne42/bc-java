@@ -98,25 +98,29 @@ public final class Fp12Element
      */
     public Fp12Element mul(Fp12Element other)
     {
-        Fp6Element a0b0 = c0.mul(other.c0);
-        Fp6Element a1b1 = c1.mul(other.c1);
-        Fp6Element t = c0.add(c1).mul(other.c0.add(other.c1)).sub(a0b0).sub(a1b1);
-        Fp6Element new0 = a0b0.add(a1b1.mulByV());
-        return new Fp12Element(new0, t);
+        // Lazy reduction: the three Fp^6 products stay unreduced and the six
+        // output Fp^2 coefficients are reduced once each (12 Fp reductions
+        // instead of 18).
+        Fp2Wide[] a0b0 = c0.mulWide(other.c0);
+        Fp2Wide[] a1b1 = c1.mulWide(other.c1);
+        Fp2Wide[] t = Fp6Element.sub(Fp6Element.sub(c0.add(c1).mulWide(other.c0.add(other.c1)), a0b0), a1b1);
+        Fp2Wide[] new0 = Fp6Element.add(a0b0, Fp6Element.mulByV(a1b1));
+        return new Fp12Element(Fp6Element.reduce(new0), Fp6Element.reduce(t));
     }
 
     /**
      * Multiplies by the sparse element {@code (l0 + l1*v) + (l4*v)*w}, the shape
      * of a Miller-loop line evaluation (its non-zero coefficients sit at
      * positions 0, 1 and 4 of the Fp^2 basis {@code 1, v, v^2, w, vw, v^2w}).
-     * Thirteen Fp^2 multiplications instead of eighteen.
+     * Thirteen Fp^2 multiplications instead of eighteen, reduced lazily: one
+     * reduction per output Fp coefficient.
      */
     Fp12Element mulBy014(Fp2Element l0, Fp2Element l1, Fp2Element l4)
     {
-        Fp6Element t0 = c0.mulBy01(l0, l1);
-        Fp6Element t1 = c1.mulBy1(l4);
-        Fp6Element t = c0.add(c1).mulBy01(l0, l1.add(l4)).sub(t0).sub(t1);
-        return new Fp12Element(t0.add(t1.mulByV()), t);
+        Fp2Wide[] t0 = c0.mulBy01Wide(l0, l1);
+        Fp2Wide[] t1 = c1.mulBy1Wide(l4);
+        Fp2Wide[] t = Fp6Element.sub(Fp6Element.sub(c0.add(c1).mulBy01Wide(l0, l1.add(l4)), t0), t1);
+        return new Fp12Element(Fp6Element.reduce(Fp6Element.add(t0, Fp6Element.mulByV(t1))), Fp6Element.reduce(t));
     }
 
     /**
@@ -160,10 +164,10 @@ public final class Fp12Element
      */
     private static Fp2Element[] fp4Square(Fp2Element a, Fp2Element b)
     {
-        Fp2Element t0 = a.square();
-        Fp2Element t1 = b.square();
-        Fp2Element c0 = t1.mulByNonResidue().add(t0);
-        Fp2Element c1 = a.add(b).square().sub(t0).sub(t1);
+        Fp2Wide t0 = Fp2Wide.square(a);
+        Fp2Wide t1 = Fp2Wide.square(b);
+        Fp2Element c0 = t1.mulByNonResidue().add(t0).reduce();
+        Fp2Element c1 = Fp2Wide.square(a.add(b)).sub(t0).sub(t1).reduce();
         return new Fp2Element[]{ c0, c1 };
     }
 
