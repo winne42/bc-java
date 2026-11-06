@@ -73,50 +73,22 @@ final class BF384
     }
 
     /**
-     * {@code dst := a * b} where {@code a} lives in GF(2^384) and {@code b}
-     * lives in GF(2^128). The multiplication is bit-serial over the 128 bits
-     * of {@code b}; at each step {@code a} is shifted left by one with
-     * reduction against the BF384 modulus. faest-ref: {@code bf384_mul_128},
-     * fields.c:727.
+     * {@code dst := a * b} where {@code a} lives in GF(2^384) and {@code b} is a
+     * GF(2^128) element read as a polynomial of degree below 128: each 128-bit chunk of
+     * {@code a} is multiplied by {@code b} by Karatsuba (see {@link BFMul}), and the
+     * product is reduced once against the BF384 modulus. Constant time. faest-ref:
+     * {@code bf384_mul_128}.
      */
     static void mul128(long[] dst, int dOff,
                        long[] a, int aOff,
                        long[] b, int bOff)
     {
-        long a0 = a[aOff],     a1 = a[aOff + 1], a2 = a[aOff + 2];
-        long a3 = a[aOff + 3], a4 = a[aOff + 4], a5 = a[aOff + 5];
-        long b0 = b[bOff],     b1 = b[bOff + 1];
-
-        long mask = -(b0 & 1L);
-        long r0 = a0 & mask, r1 = a1 & mask, r2 = a2 & mask;
-        long r3 = a3 & mask, r4 = a4 & mask, r5 = a5 & mask;
-
-        for (int idx = 1; idx != 128; ++idx)
+        long[] zz = new long[LIMBS + 2];
+        for (int i = 0; i < LIMBS; i += 2)
         {
-            long carry = a5 >>> 63;
-            a5 = (a5 << 1) | (a4 >>> 63);
-            a4 = (a4 << 1) | (a3 >>> 63);
-            a3 = (a3 << 1) | (a2 >>> 63);
-            a2 = (a2 << 1) | (a1 >>> 63);
-            a1 = (a1 << 1) | (a0 >>> 63);
-            a0 = (a0 << 1) ^ (-carry & MODULUS);
-
-            long bit = idx < 64 ? (b0 >>> idx) : (b1 >>> (idx - 64));
-            mask = -(bit & 1L);
-            r0 ^= a0 & mask;
-            r1 ^= a1 & mask;
-            r2 ^= a2 & mask;
-            r3 ^= a3 & mask;
-            r4 ^= a4 & mask;
-            r5 ^= a5 & mask;
+            BFMul.mul2Acc(a, aOff + i, b, bOff, zz, i);
         }
-
-        dst[dOff]     = r0;
-        dst[dOff + 1] = r1;
-        dst[dOff + 2] = r2;
-        dst[dOff + 3] = r3;
-        dst[dOff + 4] = r4;
-        dst[dOff + 5] = r5;
+        BFMul.reduce(zz, LIMBS + 2, LIMBS, 12, 3, 2, dst, dOff);
     }
 
     static void load(long[] dst, int off, byte[] src, int srcOff)

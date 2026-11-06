@@ -218,71 +218,27 @@ final class BF192
     }
 
     /**
-     * {@code dst := a * b} in GF(2^192). Bit-serial shift-and-reduce. faest-ref:
-     * {@code bf192_mul}, fields.c:425.
+     * {@code dst := a * b} in GF(2^192): the 3-word carry-less product by Karatsuba
+     * (see {@link BFMul}), then one reduction. Constant time; {@code dst} may alias
+     * {@code a} or {@code b}. faest-ref: {@code bf192_mul}.
      */
     static void mul(long[] dst, int dOff, long[] a, int aOff, long[] b, int bOff)
     {
-        long a0 = a[aOff],     a1 = a[aOff + 1], a2 = a[aOff + 2];
-        long b0 = b[bOff],     b1 = b[bOff + 1], b2 = b[bOff + 2];
-
-        long mask = -(b0 & 1L);
-        long r0 = a0 & mask, r1 = a1 & mask, r2 = a2 & mask;
-
-        for (int idx = 1; idx != 192; ++idx)
-        {
-            long carry = a2 >>> 63;
-            a2 = (a2 << 1) | (a1 >>> 63);
-            a1 = (a1 << 1) | (a0 >>> 63);
-            a0 = (a0 << 1) ^ (-carry & MODULUS);
-
-            long bit;
-            if (idx < 64)
-            {
-                bit = b0 >>> idx;
-            }
-            else if (idx < 128)
-            {
-                bit = b1 >>> (idx - 64);
-            }
-            else
-            {
-                bit = b2 >>> (idx - 128);
-            }
-            mask = -(bit & 1L);
-            r0 ^= a0 & mask;
-            r1 ^= a1 & mask;
-            r2 ^= a2 & mask;
-        }
-
-        dst[dOff]     = r0;
-        dst[dOff + 1] = r1;
-        dst[dOff + 2] = r2;
+        long[] zz = new long[2 * LIMBS];
+        BFMul.mul3Acc(a, aOff, b, bOff, zz, 0);
+        BFMul.reduce(zz, 2 * LIMBS, LIMBS, 7, 2, 1, dst, dOff);
     }
 
     /**
-     * {@code dst := a * b} for {@code b} in GF(2^64). 64-iteration variant of
-     * {@link #mul}. faest-ref: {@code bf192_mul_64}, fields.c:437.
+     * {@code dst := a * b} where {@code b} is a 64-bit field element from GF(2^64)
+     * embedded into BF192: one carry-less word product per limb of {@code a}, then one
+     * reduction. Constant time. faest-ref: {@code bf192_mul_64}.
      */
     static void mul64(long[] dst, int dOff, long[] a, int aOff, long b)
     {
-        long a0 = a[aOff], a1 = a[aOff + 1], a2 = a[aOff + 2];
-        long mask = -(b & 1L);
-        long r0 = a0 & mask, r1 = a1 & mask, r2 = a2 & mask;
-        for (int idx = 1; idx != 64; ++idx)
-        {
-            long carry = a2 >>> 63;
-            a2 = (a2 << 1) | (a1 >>> 63);
-            a1 = (a1 << 1) | (a0 >>> 63);
-            a0 = (a0 << 1) ^ (-carry & MODULUS);
-            mask = -((b >>> idx) & 1L);
-            r0 ^= a0 & mask;
-            r1 ^= a1 & mask;
-            r2 ^= a2 & mask;
-        }
-        dst[dOff]     = r0;
-        dst[dOff + 1] = r1;
-        dst[dOff + 2] = r2;
+        long[] zz = new long[LIMBS + 1];
+        BFMul.mulNx1Acc(a, aOff, LIMBS, b, zz, 0);
+        BFMul.reduce(zz, LIMBS + 1, LIMBS, 7, 2, 1, dst, dOff);
     }
 
     static void load(long[] dst, int off, byte[] src, int srcOff)

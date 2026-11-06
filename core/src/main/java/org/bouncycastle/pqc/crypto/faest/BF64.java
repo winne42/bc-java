@@ -1,5 +1,6 @@
 package org.bouncycastle.pqc.crypto.faest;
 
+import org.bouncycastle.util.Longs;
 import org.bouncycastle.util.Pack;
 
 /**
@@ -21,17 +22,17 @@ final class BF64
     {
     }
 
-    /** {@code a * b} in GF(2^64). faest-ref: {@code bf64_mul}, fields.c:114. */
+    /**
+     * {@code a * b} in GF(2^64): one carry-less word product (see {@link BFMul}), then
+     * the reduction. Constant time. faest-ref: {@code bf64_mul}.
+     */
     static long mul(long a, long b)
     {
-        long result = -(b & 1L) & a;
-        for (int idx = 1; idx != 64; ++idx)
-        {
-            long mask = -((a >>> 63) & 1L);
-            a = (a << 1) ^ (mask & MODULUS);
-            result ^= -((b >>> idx) & 1L) & a;
-        }
-        return result;
+        long lo = BFMul.lo(a, b);
+        long hi = BFMul.hi(Longs.reverse(a), Longs.reverse(b));
+        // x^64 = x^4 + x^3 + x + 1; the bits shifted past x^63 by that fold are folded once more
+        long s = (hi >>> 63) ^ (hi >>> 61) ^ (hi >>> 60);
+        return lo ^ hi ^ (hi << 1) ^ (hi << 3) ^ (hi << 4) ^ s ^ (s << 1) ^ (s << 3) ^ (s << 4);
     }
 
     /** Load 8 little-endian bytes into a long. */

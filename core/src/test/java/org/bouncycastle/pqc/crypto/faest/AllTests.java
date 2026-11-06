@@ -30,6 +30,7 @@ public class AllTests
     }
 
     public void testFaestField()              { run(new FaestFieldTest()); }
+    public void testFaestFieldMul()           { run(new FaestFieldMulTest()); }
     public void testFaestExtendedField()      { run(new FaestExtendedFieldTest()); }
     public void testFaestFieldHelpers()       { run(new FaestFieldHelpersTest()); }
     public void testRandomOracle()            { run(new RandomOracleTest()); }
