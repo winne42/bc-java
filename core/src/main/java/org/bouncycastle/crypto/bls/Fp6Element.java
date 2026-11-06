@@ -163,6 +163,33 @@ public final class Fp6Element
     }
 
     /**
+     * Multiplies by the sparse element {@code b0 + b1*v}: five Fp^2
+     * multiplications instead of six.
+     * <pre>
+     *   c0 = a0*b0 + a2*b1*xi
+     *   c1 = (a0 + a1)(b0 + b1) - a0*b0 - a1*b1
+     *   c2 = a1*b1 + a2*b0
+     * </pre>
+     */
+    Fp6Element mulBy01(Fp2Element b0, Fp2Element b1)
+    {
+        Fp2Element t0 = c0.mul(b0);
+        Fp2Element t1 = c1.mul(b1);
+        Fp2Element new0 = t0.add(c2.mul(b1).mulByNonResidue());
+        Fp2Element new1 = c0.add(c1).mul(b0.add(b1)).sub(t0).sub(t1);
+        Fp2Element new2 = t1.add(c2.mul(b0));
+        return new Fp6Element(new0, new1, new2);
+    }
+
+    /**
+     * Multiplies by the sparse element {@code b1*v}: three Fp^2 multiplications.
+     */
+    Fp6Element mulBy1(Fp2Element b1)
+    {
+        return new Fp6Element(c2.mul(b1).mulByNonResidue(), c0.mul(b1), c1.mul(b1));
+    }
+
+    /**
      * Multiplies an element of Fp^6 by {@code v}, the polynomial generator.
      * Useful for the Fp^12 multiplication formula.
      */

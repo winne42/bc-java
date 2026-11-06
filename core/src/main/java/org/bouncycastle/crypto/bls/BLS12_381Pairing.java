@@ -7,22 +7,18 @@ import org.bouncycastle.math.ec.ECPoint;
 /**
  * Optimal ate pairing on BLS12-381: a bilinear, non-degenerate map
  * {@code e: G1 x G2 -> GT} where GT is the order-r subgroup of Fp^12 ^*.
- * <p>
- * This implementation favours obvious correctness over performance:
  * <ul>
- *   <li>G2 is lifted into {@code E(Fp^12)} via the D-twist isomorphism
- *       {@code (x', y') -> (x'/w^2, y'/w^3)}.</li>
- *   <li>The Miller loop runs the textbook affine doubling / addition
- *       formulas on {@code E(Fp^12)} and computes the line evaluations as
- *       full (non-sparse) Fp^12 elements.</li>
- *   <li>The final exponentiation is performed as a single Fp^12 modPow with
- *       exponent {@code (p^12 - 1) / r}, sidestepping the
- *       Frobenius-coefficient infrastructure that the spec-recommended
- *       easy/hard-part split would need.</li>
+ *   <li>The Miller loop keeps {@code T} on the twist {@code E'(Fp^2)} in
+ *       Jacobian coordinates, so no step inverts, and evaluates each line at
+ *       {@code P} directly as a sparse Fp^12 element with three non-zero Fp^2
+ *       coefficients, multiplied into the accumulator by
+ *       {@link Fp12Element#mulBy014}. The lines are scaled by Fp^2 and Fp^4
+ *       factors (the twist's {@code w^3} and the Jacobian denominators); every
+ *       such factor lies in a proper subfield of Fp^12, which the final
+ *       exponentiation maps to 1, so the pairing value is unchanged.</li>
+ *   <li>The final exponentiation splits into the Frobenius-based easy part and
+ *       the hard part described at {@code finalExponentiation}.</li>
  * </ul>
- * Sparse line evaluation, Frobenius-based final exponentiation, and a
- * Jacobian-coord G2 in pairing context are all natural follow-on
- * optimisations that preserve the public surface here.
  */
 public class BLS12_381Pairing
 {
@@ -61,38 +57,6 @@ public class BLS12_381Pairing
             throw new IllegalStateException("(x - 1)^2 must be divisible by 3 for BLS12 family");
         }
         X_MINUS_1_SQ_OVER_3 = divRem[0];
-    }
-
-    /** Fp^12 lift of the constant 2, hoisted out of the Miller loop. */
-    private static final Fp12Element TWO;
-
-    /** Fp^12 lift of the constant 3, hoisted out of the Miller loop. */
-    private static final Fp12Element THREE;
-
-    /** {@code w^{-2}} in Fp^12, used to lift G2 via the D-twist. */
-    private static final Fp12Element W_INV_SQUARED;
-
-    /** {@code w^{-3}} in Fp^12, used to lift G2 via the D-twist. */
-    private static final Fp12Element W_INV_CUBED;
-
-    static
-    {
-        // (1 - I) / 2 in Fp^2: numerator components are (1, -1), divided by 2.
-        BigInteger half = BigInteger.valueOf(2).modInverse(Fp2Element.P);
-        Fp2Element oneMinusIOverTwo = Fp2Element.of(half, Fp2Element.P.subtract(half));
-
-        // w^-2 = 1/v in Fp^6 = v^2 / xi where xi = 1 + I.
-        // v^2 has Fp^6 representation (0, 0, 1) so w^-2 = (0, 0, (1-I)/2) in Fp^6.
-        W_INV_SQUARED = Fp12Element.fromFp6(Fp6Element.of(
-            Fp2Element.ZERO, Fp2Element.ZERO, oneMinusIOverTwo));
-
-        // w^-3 = w * w^-4 = w * v^-2. v^-2 has Fp^6 representation (0, (1-I)/2, 0).
-        // In Fp^12 = Fp^6 + Fp^6 * w, w^-3 has c0 = 0, c1 = v^-2.
-        W_INV_CUBED = Fp12Element.of(Fp6Element.ZERO, Fp6Element.of(
-            Fp2Element.ZERO, oneMinusIOverTwo, Fp2Element.ZERO));
-
-        TWO = liftFp(BigInteger.valueOf(2));
-        THREE = liftFp(BigInteger.valueOf(3));
     }
 
     private BLS12_381Pairing()
@@ -139,7 +103,7 @@ public class BLS12_381Pairing
             throw new IllegalArgumentException("g1 / g2 arrays must be the same length");
         }
 
-        // Filter out infinities and lift to Fp^12 once up front.
+        // Skip pairs with a point at infinity: their pairing value is 1.
         int n = 0;
         for (int i = 0; i < g1Points.length; ++i)
         {
@@ -153,12 +117,11 @@ public class BLS12_381Pairing
             return Fp12Element.ONE;
         }
 
-        Fp12Element[] xP = new Fp12Element[n];
-        Fp12Element[] yP = new Fp12Element[n];
-        Fp12Element[] xT = new Fp12Element[n];
-        Fp12Element[] yT = new Fp12Element[n];
-        Fp12Element[] xQ = new Fp12Element[n];
-        Fp12Element[] yQ = new Fp12Element[n];
+        BigInteger[] negXP = new BigInteger[n];
+        BigInteger[] yP = new BigInteger[n];
+        Fp2Element[] xQ = new Fp2Element[n];
+        Fp2Element[] yQ = new Fp2Element[n];
+        Fp2Element[][] t = new Fp2Element[n][];
 
         int k = 0;
         for (int i = 0; i < g1Points.length; ++i)
@@ -168,15 +131,11 @@ public class BLS12_381Pairing
                 continue;
             }
             ECPoint normalised = g1Points[i].normalize();
-            xP[k] = liftFp(normalised.getAffineXCoord().toBigInteger());
-            yP[k] = liftFp(normalised.getAffineYCoord().toBigInteger());
-
-            Fp12Element qx = liftFp2(g2Points[i].x()).mul(W_INV_SQUARED);
-            Fp12Element qy = liftFp2(g2Points[i].y()).mul(W_INV_CUBED);
-            xQ[k] = qx;
-            yQ[k] = qy;
-            xT[k] = qx;
-            yT[k] = qy;
+            negXP[k] = normalised.getAffineXCoord().toBigInteger().negate().mod(Fp2Element.P);
+            yP[k] = normalised.getAffineYCoord().toBigInteger();
+            xQ[k] = g2Points[i].x();
+            yQ[k] = g2Points[i].y();
+            t[k] = new Fp2Element[]{ xQ[k], yQ[k], Fp2Element.ONE };
             k++;
         }
 
@@ -187,19 +146,13 @@ public class BLS12_381Pairing
             f = f.square();
             for (int j = 0; j < n; ++j)
             {
-                Fp12Element[] doubled = doubleAndLine(xT[j], yT[j], xP[j], yP[j]);
-                xT[j] = doubled[0];
-                yT[j] = doubled[1];
-                f = f.mul(doubled[2]);
+                f = doublingStep(f, t[j], negXP[j], yP[j]);
             }
             if (ABS_X.testBit(i))
             {
                 for (int j = 0; j < n; ++j)
                 {
-                    Fp12Element[] added = addAndLine(xT[j], yT[j], xQ[j], yQ[j], xP[j], yP[j]);
-                    xT[j] = added[0];
-                    yT[j] = added[1];
-                    f = f.mul(added[2]);
+                    f = additionStep(f, t[j], xQ[j], yQ[j], negXP[j], yP[j]);
                 }
             }
         }
@@ -281,46 +234,91 @@ public class BLS12_381Pairing
     }
 
     /**
-     * Affine doubling of {@code T = (xT, yT)} with line evaluation at
-     * {@code P = (xP, yP)}. All coordinates are in Fp^12.
-     *
-     * @return {@code {x_2T, y_2T, line_T(P)}}.
+     * Doubles {@code T = (X, Y, Z)} in place (Jacobian, dbl-2009-l) and returns
+     * {@code f} times the tangent line at {@code T} evaluated at
+     * {@code P = (xP, yP)}.
+     * <p>
+     * On the twist the tangent has slope {@code 3x^2 / 2y}; after untwisting and
+     * multiplying by {@code w^3} its value at {@code P} is
+     * {@code (lambda*x - y) - lambda*xP*v + yP*v*w}. Scaled by
+     * {@code 2*Y*Z^3}, with {@code x = X/Z^2}, {@code y = Y/Z^3}, the three
+     * coefficients are {@code 3X^3 - 2Y^2}, {@code -3X^2*Z^2*xP} and
+     * {@code 2Y*Z^3*yP}.
      */
-    private static Fp12Element[] doubleAndLine(Fp12Element xT, Fp12Element yT,
-        Fp12Element xP, Fp12Element yP)
+    private static Fp12Element doublingStep(Fp12Element f, Fp2Element[] t, BigInteger negXP, BigInteger yP)
     {
-        // slope lambda = 3 * xT^2 / (2 * yT) since the curve has A = 0.
-        Fp12Element lambda = xT.square().mul(THREE).mul(TWO.mul(yT).inverse());
-        Fp12Element xNew = lambda.square().sub(xT).sub(xT);
-        Fp12Element yNew = lambda.mul(xT.sub(xNew)).sub(yT);
-        // line(X, Y) = Y - yT - lambda * (X - xT)
-        Fp12Element line = yP.sub(yT).sub(lambda.mul(xP.sub(xT)));
-        return new Fp12Element[]{xNew, yNew, line};
+        Fp2Element x1 = t[0], y1 = t[1], z1 = t[2];
+        if (y1.isZero())
+        {
+            throw new ArithmeticException("Miller loop doubled a point of order 2: G2 input not in the subgroup");
+        }
+        Fp2Element a = x1.square();
+        Fp2Element b = y1.square();
+        Fp2Element c = b.square();
+        Fp2Element z1z1 = z1.square();
+        Fp2Element d = x1.add(b).square().sub(a).sub(c);
+        d = d.add(d);
+        Fp2Element e = a.add(a).add(a);
+        Fp2Element x3 = e.square().sub(d.add(d));
+        Fp2Element c8 = c.add(c);
+        c8 = c8.add(c8);
+        c8 = c8.add(c8);
+        Fp2Element y3 = e.mul(d.sub(x3)).sub(c8);
+        Fp2Element yz = y1.mul(z1);
+        Fp2Element z3 = yz.add(yz);
+
+        Fp2Element l0 = x1.mul(e).sub(b.add(b));
+        Fp2Element l1 = e.mul(z1z1).mulFp(negXP);
+        Fp2Element l4 = z3.mul(z1z1).mulFp(yP);
+
+        t[0] = x3;
+        t[1] = y3;
+        t[2] = z3;
+        return f.mulBy014(l0, l1, l4);
     }
 
     /**
-     * Affine addition of {@code T = (xT, yT)} and {@code Q = (xQ, yQ)} with
-     * line evaluation at {@code P = (xP, yP)}.
-     *
-     * @return {@code {x_T+Q, y_T+Q, line_TQ(P)}}.
+     * Adds the affine {@code Q = (xQ, yQ)} to {@code T = (X, Y, Z)} in place
+     * (mixed Jacobian addition, madd-2007-bl) and returns {@code f} times the
+     * line through {@code T} and {@code Q} evaluated at {@code P}.
+     * <p>
+     * With {@code lambda = (yQ - y) / (xQ - x)} the untwisted line, multiplied
+     * by {@code w^3}, is {@code (lambda*xQ - yQ) - lambda*xP*v + yP*v*w}; scaled
+     * by {@code Z3 = 2*H*Z} (so {@code lambda * Z3 = r}) its coefficients are
+     * {@code r*xQ - yQ*Z3}, {@code -r*xP} and {@code Z3*yP}.
      */
-    private static Fp12Element[] addAndLine(Fp12Element xT, Fp12Element yT,
-        Fp12Element xQ, Fp12Element yQ, Fp12Element xP, Fp12Element yP)
+    private static Fp12Element additionStep(Fp12Element f, Fp2Element[] t, Fp2Element xQ, Fp2Element yQ,
+        BigInteger negXP, BigInteger yP)
     {
-        Fp12Element lambda = yQ.sub(yT).mul(xQ.sub(xT).inverse());
-        Fp12Element xNew = lambda.square().sub(xT).sub(xQ);
-        Fp12Element yNew = lambda.mul(xT.sub(xNew)).sub(yT);
-        Fp12Element line = yP.sub(yT).sub(lambda.mul(xP.sub(xT)));
-        return new Fp12Element[]{xNew, yNew, line};
-    }
+        Fp2Element x1 = t[0], y1 = t[1], z1 = t[2];
+        Fp2Element z1z1 = z1.square();
+        Fp2Element u2 = xQ.mul(z1z1);
+        Fp2Element s2 = yQ.mul(z1).mul(z1z1);
+        Fp2Element h = u2.sub(x1);
+        if (h.isZero())
+        {
+            // T = +-Q: impossible for Q of prime order r, since T = [k]Q with 1 < k < r.
+            throw new ArithmeticException("Miller loop reached T = +-Q: G2 input not in the subgroup");
+        }
+        Fp2Element hh = h.square();
+        Fp2Element i4 = hh.add(hh);
+        i4 = i4.add(i4);
+        Fp2Element j = h.mul(i4);
+        Fp2Element r = s2.sub(y1);
+        r = r.add(r);
+        Fp2Element v = x1.mul(i4);
+        Fp2Element x3 = r.square().sub(j).sub(v.add(v));
+        Fp2Element y1j = y1.mul(j);
+        Fp2Element y3 = r.mul(v.sub(x3)).sub(y1j.add(y1j));
+        Fp2Element z3 = z1.add(h).square().sub(z1z1).sub(hh);
 
-    private static Fp12Element liftFp(BigInteger v)
-    {
-        return Fp12Element.fromFp6(Fp6Element.fromFp2(Fp2Element.fromFp(v)));
-    }
+        Fp2Element l0 = r.mul(xQ).sub(yQ.mul(z3));
+        Fp2Element l1 = r.mulFp(negXP);
+        Fp2Element l4 = z3.mulFp(yP);
 
-    private static Fp12Element liftFp2(Fp2Element v)
-    {
-        return Fp12Element.fromFp6(Fp6Element.fromFp2(v));
+        t[0] = x3;
+        t[1] = y3;
+        t[2] = z3;
+        return f.mulBy014(l0, l1, l4);
     }
 }

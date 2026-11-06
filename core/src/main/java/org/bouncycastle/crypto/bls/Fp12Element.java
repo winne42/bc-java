@@ -106,6 +106,20 @@ public final class Fp12Element
     }
 
     /**
+     * Multiplies by the sparse element {@code (l0 + l1*v) + (l4*v)*w}, the shape
+     * of a Miller-loop line evaluation (its non-zero coefficients sit at
+     * positions 0, 1 and 4 of the Fp^2 basis {@code 1, v, v^2, w, vw, v^2w}).
+     * Thirteen Fp^2 multiplications instead of eighteen.
+     */
+    Fp12Element mulBy014(Fp2Element l0, Fp2Element l1, Fp2Element l4)
+    {
+        Fp6Element t0 = c0.mulBy01(l0, l1);
+        Fp6Element t1 = c1.mulBy1(l4);
+        Fp6Element t = c0.add(c1).mulBy01(l0, l1.add(l4)).sub(t0).sub(t1);
+        return new Fp12Element(t0.add(t1.mulByV()), t);
+    }
+
+    /**
      * Squaring via complex-style: (a0 + a1*w)^2 = (a0+a1)(a0+a1*v) - a0*a1 - a0*a1*v + 2*a0*a1*w.
      * Three Fp^6 multiplications versus four for the Karatsuba product.
      */
