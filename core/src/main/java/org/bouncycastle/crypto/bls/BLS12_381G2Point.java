@@ -6,8 +6,11 @@ import java.math.BigInteger;
  * Affine point on the BLS12-381 G2 curve {@code E: y^2 = x^3 + 4*(1+I)} over
  * Fp^2.
  * <p>
- * Affine coordinates with each operation normalising via
- * {@link Fp2Element#inverse()}.
+ * Points are held in affine coordinates. {@link #add} and {@link #doublePoint}
+ * work affinely, one {@link Fp2Element#inverse()} each; the two scalar
+ * multiplications run in Jacobian coordinates ({@code x = X/Z^2},
+ * {@code y = Y/Z^3}) with mixed additions of the affine base point, so they
+ * need a single inversion, to return to affine form at the end.
  * <p>
  * Two scalar-multiplication APIs are provided: {@link #multiply} is the
  * variable-time double-and-add — fast for public scalars (cofactor
@@ -133,9 +136,12 @@ public final class BLS12_381G2Point
      * <p>
      * <b>Caveats.</b> "Constant-time" here means the
      * scalar-bit-pattern-independent at the scalar-mult loop level.
-     * The underlying affine point ops still have data-dependent branches
-     * for infinity / equal-x cases (which are negligibly probable for
-     * random secret scalars on a prime-order subgroup), and the JVM
+     * The underlying Jacobian point ops still have data-dependent branches
+     * for the infinity / equal-x cases of the mixed addition (the accumulator
+     * is at infinity until the scalar's first set bit; the equal-x cases are
+     * negligibly probable for random secret scalars on a prime-order
+     * subgroup), the {@link BigInteger} field arithmetic is not constant
+     * time, and the JVM
      * itself may introduce cache / GC / JIT timing variance that pure
      * Java cannot fully eliminate. Sufficient against a remote network
      * timing attacker on a typical workload; not a substitute for a
@@ -161,18 +167,18 @@ public final class BLS12_381G2Point
         // actual bit length of scalar, so the iteration count carries no
         // information about the secret.
         final int FIXED_BITS = 256;
-        BLS12_381G2Point r = INFINITY;
-        BLS12_381G2Point[] options = new BLS12_381G2Point[2];
+        Fp2Element[] r = JACOBIAN_INFINITY;
+        Fp2Element[][] options = new Fp2Element[2][];
         for (int i = FIXED_BITS - 1; i >= 0; --i)
         {
-            r = r.doublePoint();
-            BLS12_381G2Point candidate = r.add(this);
+            r = jacobianDouble(r);
+            Fp2Element[] candidate = jacobianAddAffine(r, x, y);
             options[0] = r;
             options[1] = candidate;
             int bit = scalar.testBit(i) ? 1 : 0;
             r = options[bit];
         }
-        return r;
+        return fromJacobian(r);
     }
 
     /**
@@ -190,17 +196,91 @@ public final class BLS12_381G2Point
         {
             return negate().multiply(scalar.negate());
         }
-        BLS12_381G2Point result = INFINITY;
-        BLS12_381G2Point addend = this;
-        for (int i = 0; i < scalar.bitLength(); ++i)
+        Fp2Element[] r = JACOBIAN_INFINITY;
+        for (int i = scalar.bitLength() - 1; i >= 0; --i)
         {
+            r = jacobianDouble(r);
             if (scalar.testBit(i))
             {
-                result = result.add(addend);
+                r = jacobianAddAffine(r, x, y);
             }
-            addend = addend.doublePoint();
         }
-        return result;
+        return fromJacobian(r);
+    }
+
+    /** The point at infinity in Jacobian coordinates (any point with Z = 0). */
+    private static final Fp2Element[] JACOBIAN_INFINITY = { Fp2Element.ONE, Fp2Element.ONE, Fp2Element.ZERO };
+
+    /**
+     * Jacobian doubling for a = 0 (dbl-2009-l, Explicit-Formulas Database):
+     * 2M + 5S. Z = 0 (infinity) and Y = 0 (order 2) both give Z3 = 0, so
+     * neither needs a branch.
+     */
+    private static Fp2Element[] jacobianDouble(Fp2Element[] p)
+    {
+        Fp2Element x1 = p[0], y1 = p[1], z1 = p[2];
+        Fp2Element a = x1.square();
+        Fp2Element b = y1.square();
+        Fp2Element c = b.square();
+        Fp2Element t = x1.add(b).square().sub(a).sub(c);
+        Fp2Element d = t.add(t);
+        Fp2Element e = a.add(a).add(a);
+        Fp2Element f = e.square();
+        Fp2Element x3 = f.sub(d.add(d));
+        Fp2Element c8 = c.add(c);
+        c8 = c8.add(c8);
+        c8 = c8.add(c8);
+        Fp2Element y3 = e.mul(d.sub(x3)).sub(c8);
+        Fp2Element yz = y1.mul(z1);
+        Fp2Element z3 = yz.add(yz);
+        return new Fp2Element[]{ x3, y3, z3 };
+    }
+
+    /**
+     * Mixed addition of a Jacobian point and an affine point (madd-2007-bl,
+     * Explicit-Formulas Database): 7M + 4S. Handles {@code p} at infinity
+     * and the doubling and inverse cases, which the formula does not.
+     */
+    private static Fp2Element[] jacobianAddAffine(Fp2Element[] p, Fp2Element x2, Fp2Element y2)
+    {
+        Fp2Element x1 = p[0], y1 = p[1], z1 = p[2];
+        if (z1.isZero())
+        {
+            return new Fp2Element[]{ x2, y2, Fp2Element.ONE };
+        }
+        Fp2Element z1z1 = z1.square();
+        Fp2Element u2 = x2.mul(z1z1);
+        Fp2Element s2 = y2.mul(z1).mul(z1z1);
+        Fp2Element h = u2.sub(x1);
+        Fp2Element sy = s2.sub(y1);
+        if (h.isZero())
+        {
+            // Same x: P + P is a doubling, P + (-P) is infinity.
+            return sy.isZero() ? jacobianDouble(p) : JACOBIAN_INFINITY;
+        }
+        Fp2Element hh = h.square();
+        Fp2Element i = hh.add(hh);
+        i = i.add(i);
+        Fp2Element j = h.mul(i);
+        Fp2Element r = sy.add(sy);
+        Fp2Element v = x1.mul(i);
+        Fp2Element x3 = r.square().sub(j).sub(v.add(v));
+        Fp2Element y1j = y1.mul(j);
+        Fp2Element y3 = r.mul(v.sub(x3)).sub(y1j.add(y1j));
+        Fp2Element z3 = z1.add(h).square().sub(z1z1).sub(hh);
+        return new Fp2Element[]{ x3, y3, z3 };
+    }
+
+    /** Converts Jacobian {@code (X, Y, Z)} to the affine point {@code (X/Z^2, Y/Z^3)}. */
+    private static BLS12_381G2Point fromJacobian(Fp2Element[] p)
+    {
+        if (p[2].isZero())
+        {
+            return INFINITY;
+        }
+        Fp2Element zInv = p[2].inverse();
+        Fp2Element zInv2 = zInv.square();
+        return new BLS12_381G2Point(p[0].mul(zInv2), p[1].mul(zInv2).mul(zInv), false);
     }
 
     public boolean equals(Object other)

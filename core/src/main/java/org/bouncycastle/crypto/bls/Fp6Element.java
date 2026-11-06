@@ -112,14 +112,17 @@ public final class Fp6Element
     }
 
     /**
-     * Schoolbook multiplication using {@code v^3 = NON_RESIDUE}:
+     * Multiplication using {@code v^3 = NON_RESIDUE}:
      * <pre>
      *   (a0 + a1*v + a2*v^2) * (b0 + b1*v + b2*v^2)
      *   = (a0*b0 + (a1*b2 + a2*b1)*xi)
      *   + (a0*b1 + a1*b0 + a2*b2*xi) * v
      *   + (a0*b2 + a1*b1 + a2*b0) * v^2
      * </pre>
-     * where xi = NON_RESIDUE.
+     * where xi = NON_RESIDUE. The cross terms come from Karatsuba
+     * ({@code a1*b2 + a2*b1 = (a1 + a2)(b1 + b2) - a1*b1 - a2*b2} and so on),
+     * so the product takes six Fp^2 multiplications instead of nine, and the
+     * products by xi need none (see {@link Fp2Element#mulByNonResidue}).
      */
     public Fp6Element mul(Fp6Element other)
     {
@@ -131,8 +134,8 @@ public final class Fp6Element
         Fp2Element t2 = c0.add(c1).mul(other.c0.add(other.c1)).sub(a0b0).sub(a1b1);
         Fp2Element t3 = c0.add(c2).mul(other.c0.add(other.c2)).sub(a0b0).sub(a2b2);
 
-        Fp2Element new0 = a0b0.add(t1.mul(NON_RESIDUE));
-        Fp2Element new1 = t2.add(a2b2.mul(NON_RESIDUE));
+        Fp2Element new0 = a0b0.add(t1.mulByNonResidue());
+        Fp2Element new1 = t2.add(a2b2.mulByNonResidue());
         Fp2Element new2 = t3.add(a1b1);
 
         return new Fp6Element(new0, new1, new2);
@@ -152,8 +155,8 @@ public final class Fp6Element
         Fp2Element s3 = bc.add(bc);
         Fp2Element s4 = c2.square();
 
-        Fp2Element new0 = s0.add(s3.mul(NON_RESIDUE));
-        Fp2Element new1 = s1.add(s4.mul(NON_RESIDUE));
+        Fp2Element new0 = s0.add(s3.mulByNonResidue());
+        Fp2Element new1 = s1.add(s4.mulByNonResidue());
         Fp2Element new2 = s1.add(s2).add(s3).sub(s0).sub(s4);
 
         return new Fp6Element(new0, new1, new2);
@@ -167,7 +170,7 @@ public final class Fp6Element
     {
         // (c0 + c1*v + c2*v^2) * v = c0*v + c1*v^2 + c2*v^3
         //                          = c2 * NON_RESIDUE + c0 * v + c1 * v^2
-        return new Fp6Element(c2.mul(NON_RESIDUE), c0, c1);
+        return new Fp6Element(c2.mulByNonResidue(), c0, c1);
     }
 
     /**
@@ -194,10 +197,10 @@ public final class Fp6Element
         {
             throw new ArithmeticException("Fp6Element zero is not invertible");
         }
-        Fp2Element t0 = c0.square().sub(c1.mul(c2).mul(NON_RESIDUE));
-        Fp2Element t1 = c2.square().mul(NON_RESIDUE).sub(c0.mul(c1));
+        Fp2Element t0 = c0.square().sub(c1.mul(c2).mulByNonResidue());
+        Fp2Element t1 = c2.square().mulByNonResidue().sub(c0.mul(c1));
         Fp2Element t2 = c1.square().sub(c0.mul(c2));
-        Fp2Element norm = c0.mul(t0).add(c2.mul(t1).mul(NON_RESIDUE)).add(c1.mul(t2).mul(NON_RESIDUE));
+        Fp2Element norm = c0.mul(t0).add(c2.mul(t1).mulByNonResidue()).add(c1.mul(t2).mulByNonResidue());
         Fp2Element normInv = norm.inverse();
         return new Fp6Element(t0.mul(normInv), t1.mul(normInv), t2.mul(normInv));
     }
