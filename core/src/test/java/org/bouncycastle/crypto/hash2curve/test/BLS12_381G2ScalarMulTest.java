@@ -97,6 +97,23 @@ public class BLS12_381G2ScalarMulTest
         }
     }
 
+    /**
+     * The endomorphism-based cofactor clearing used by hash-to-curve must equal
+     * the plain multiplication by h_eff it replaces, for points outside and
+     * inside the subgroup and for infinity.
+     */
+    public void testClearCofactorMatchesHEff()
+    {
+        for (int i = 0; i < 4; ++i)
+        {
+            BLS12_381G2Point p = nonSubgroupPoint();
+            assertEquals(p.multiply(BLS12_381G2.H_EFF), BLS12_381G2HashToCurve.clearCofactor(p));
+        }
+        BLS12_381G2Point g = BLS12_381G2.getGenerator();
+        assertEquals(g.multiply(BLS12_381G2.H_EFF), BLS12_381G2HashToCurve.clearCofactor(g));
+        assertTrue(BLS12_381G2HashToCurve.clearCofactor(BLS12_381G2Point.INFINITY).isInfinity());
+    }
+
     public void testInfinity()
     {
         assertTrue(BLS12_381G2Point.INFINITY.multiply(BigInteger.TEN).isInfinity());

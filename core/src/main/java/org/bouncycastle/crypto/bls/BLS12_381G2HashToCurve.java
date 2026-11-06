@@ -41,6 +41,9 @@ public class BLS12_381G2HashToCurve
     /** SSWU Z parameter: -(2 + I). */
     private static final Fp2Element Z = Fp2Element.of(-2, -1);
 
+    /** The BLS12-381 parameter x = -0xd201000000010000 (RFC 9380 App. G.3 c1). */
+    private static final BigInteger X = new BigInteger("-d201000000010000", 16);
+
     /** iso_3 x_num coefficients k_(1,0..3). */
     private static final Fp2Element[] K1 = {
         Fp2Element.of(
@@ -111,7 +114,26 @@ public class BLS12_381G2HashToCurve
         BLS12_381G2Point q0 = mapToCurveAndIso3(u[0]);
         BLS12_381G2Point q1 = mapToCurveAndIso3(u[1]);
         BLS12_381G2Point r = q0.add(q1);
-        return r.multiply(BLS12_381G2.H_EFF);
+        return clearCofactor(r);
+    }
+
+    /**
+     * {@code h_eff * P} by the endomorphism method of Budroni and Pintore
+     * (RFC 9380 App. G.3, {@code clear_cofactor_bls12381_g2}):
+     * {@code [x^2 - x - 1]P + [x - 1]psi(P) + psi^2(2P)}, using two scalar
+     * multiplications by the 64-bit x instead of one by the 636-bit
+     * {@code h_eff}. Exposed for layered testing against
+     * {@code P.multiply(BLS12_381G2.H_EFF)}.
+     */
+    public static BLS12_381G2Point clearCofactor(BLS12_381G2Point p)
+    {
+        BLS12_381G2Point t1 = p.multiply(X);
+        BLS12_381G2Point t2 = BLS12_381SubgroupCheck.psiG2(p);
+        BLS12_381G2Point t3 = BLS12_381SubgroupCheck.psiG2(BLS12_381SubgroupCheck.psiG2(p.doublePoint()));
+        t3 = t3.add(t2.negate());
+        t2 = t1.add(t2).multiply(X);
+        t3 = t3.add(t2).add(t1.negate());
+        return t3.add(p.negate());
     }
 
     /**
