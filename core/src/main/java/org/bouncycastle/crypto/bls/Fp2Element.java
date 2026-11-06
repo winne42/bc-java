@@ -251,21 +251,21 @@ public final class Fp2Element
     }
 
     /** {@code (a + b) mod p} for {@code a, b} in {@code [0, p)}. */
-    private static BigInteger addFp(BigInteger a, BigInteger b)
+    static BigInteger addFp(BigInteger a, BigInteger b)
     {
         BigInteger s = a.add(b);
         return s.compareTo(P) >= 0 ? s.subtract(P) : s;
     }
 
     /** {@code (a - b) mod p} for {@code a, b} in {@code [0, p)}. */
-    private static BigInteger subFp(BigInteger a, BigInteger b)
+    static BigInteger subFp(BigInteger a, BigInteger b)
     {
         BigInteger d = a.subtract(b);
         return d.signum() < 0 ? d.add(P) : d;
     }
 
     /** {@code -a mod p} for {@code a} in {@code [0, p)}. */
-    private static BigInteger negFp(BigInteger a)
+    static BigInteger negFp(BigInteger a)
     {
         return a.signum() == 0 ? a : P.subtract(a);
     }

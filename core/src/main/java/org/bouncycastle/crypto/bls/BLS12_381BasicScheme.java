@@ -131,7 +131,9 @@ public class BLS12_381BasicScheme
         {
             return false;
         }
-        if (!pk.isValid())
+        // Not pk.isValid(): besides the curve equation it checks [r] pk == 0 by a full
+        // 255-bit multiplication, which the subgroup check below decides exactly.
+        if (!BLS12_381G1.isOnCurve(pk))
         {
             return false;
         }
