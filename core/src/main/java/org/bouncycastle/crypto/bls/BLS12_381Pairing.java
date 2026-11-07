@@ -9,11 +9,11 @@ import org.bouncycastle.math.ec.ECPoint;
  * {@code e: G1 x G2 -> GT} where GT is the order-r subgroup of Fp^12 ^*.
  * <ul>
  *   <li>The Miller loop keeps {@code T} on the twist {@code E'(Fp^2)} in
- *       Jacobian coordinates, so no step inverts, and evaluates each line at
- *       {@code P} directly as a sparse Fp^12 element with three non-zero Fp^2
- *       coefficients, multiplied into the accumulator by
+ *       homogeneous projective coordinates, so no step inverts, and
+ *       evaluates each line at {@code P} directly as a sparse Fp^12 element
+ *       with three non-zero Fp^2 coefficients, multiplied into the accumulator by
  *       {@link Fp12Element#mulBy014}. The lines are scaled by Fp^2 and Fp^4
- *       factors (the twist's {@code w^3} and the Jacobian denominators); every
+ *       factors (the twist's {@code w^3} and the projective denominators); every
  *       such factor lies in a proper subfield of Fp^12, which the final
  *       exponentiation maps to 1, so the pairing value is unchanged.</li>
  *   <li>The final exponentiation splits into the Frobenius-based easy part and
@@ -239,16 +239,24 @@ public class BLS12_381Pairing
     }
 
     /**
-     * Doubles {@code T = (X, Y, Z)} in place (Jacobian, dbl-2009-l) and returns
-     * {@code f} times the tangent line at {@code T} evaluated at
-     * {@code P = (xP, yP)}.
+     * Doubles {@code T = (X, Y, Z)} in place and returns {@code f} times the
+     * tangent line at {@code T} evaluated at {@code P = (xP, yP)}. T is in
+     * homogeneous projective coordinates ({@code x = X/Z}, {@code y = Y/Z}),
+     * where the doubling and its line cost 3 Fp&sup2; multiplications and 6
+     * squarings (Costello, Lange and Naehrig, "Faster pairing computations on
+     * curves with high-degree twists", PKC 2010, as written out by Aranha et
+     * al., ePrint 2010/354, sec. 4), against 5 and 6 in Jacobian coordinates.
      * <p>
-     * On the twist the tangent has slope {@code 3x^2 / 2y}; after untwisting and
-     * multiplying by {@code w^3} its value at {@code P} is
-     * {@code (lambda*x - y) - lambda*xP*v + yP*v*w}. Scaled by
-     * {@code 2*Y*Z^3}, with {@code x = X/Z^2}, {@code y = Y/Z^3}, the three
-     * coefficients are {@code 3X^3 - 2Y^2}, {@code -3X^2*Z^2*xP} and
-     * {@code 2Y*Z^3*yP}.
+     * On the twist {@code y^2 = x^3 + b'}, {@code b' = 4(1 + I)}, the doubled
+     * point is {@code X3 = XY/2 (Y^2 - 9b'Z^2)},
+     * {@code Y3 = ((Y^2 + 9b'Z^2)/2)^2 - 27b'^2 Z^4}, {@code Z3 = 2Y^3 Z}, here
+     * all multiplied by 4 to avoid the halvings. The tangent has slope
+     * {@code 3x^2 / 2y}; after untwisting and multiplying by {@code w^3} its
+     * value at {@code P} is {@code (lambda*x - y) - lambda*xP*v + yP*v*w}.
+     * Scaled by {@code 2YZ} and reduced with the curve equation
+     * {@code Y^2 Z = X^3 + b'Z^3}, the three coefficients are
+     * {@code Y^2 - 3b'Z^2}, {@code -3X^2*xP} and {@code 2YZ*yP}. Any Fp&sup2;
+     * factor on a line is removed by the final exponentiation.
      */
     private static Fp12Element doublingStep(Fp12Element f, Fp2Element[] t, BigInteger negXP, BigInteger yP)
     {
@@ -257,24 +265,29 @@ public class BLS12_381Pairing
         {
             throw new ArithmeticException("Miller loop doubled a point of order 2: G2 input not in the subgroup");
         }
-        Fp2Element a = x1.square();
         Fp2Element b = y1.square();
-        Fp2Element c = b.square();
-        Fp2Element z1z1 = z1.square();
-        Fp2Element d = x1.add(b).square().sub(a).sub(c);
-        d = d.add(d);
-        Fp2Element e = a.add(a).add(a);
-        Fp2Element x3 = e.square().sub(d.add(d));
-        Fp2Element c8 = c.add(c);
-        c8 = c8.add(c8);
-        c8 = c8.add(c8);
-        Fp2Element y3 = e.mul(d.sub(x3)).sub(c8);
-        Fp2Element yz = y1.mul(z1);
-        Fp2Element z3 = yz.add(yz);
+        Fp2Element c = z1.square();
+        Fp2Element e = c.add(c).add(c).mulByNonResidue();
+        e = e.add(e);
+        e = e.add(e);                                       // 3b'Z^2
+        Fp2Element f3 = e.add(e).add(e);                    // 9b'Z^2
+        Fp2Element h = y1.add(z1).square().sub(b).sub(c);   // 2YZ
+        Fp2Element j = x1.square();
+        Fp2Element ee = e.square();
+        Fp2Element xy = x1.mul(y1);
 
-        Fp2Element l0 = x1.mul(e).sub(b.add(b));
-        Fp2Element l1 = e.mul(z1z1).mulFp(negXP);
-        Fp2Element l4 = z3.mul(z1z1).mulFp(yP);
+        Fp2Element x3 = xy.add(xy).mul(b.sub(f3));
+        Fp2Element ee12 = ee.add(ee).add(ee);
+        ee12 = ee12.add(ee12);
+        ee12 = ee12.add(ee12);
+        Fp2Element y3 = b.add(f3).square().sub(ee12);
+        Fp2Element z3 = b.mul(h);
+        z3 = z3.add(z3);
+        z3 = z3.add(z3);
+
+        Fp2Element l0 = b.sub(e);
+        Fp2Element l1 = j.add(j).add(j).mulFp(negXP);
+        Fp2Element l4 = h.mulFp(yP);
 
         t[0] = x3;
         t[1] = y3;
@@ -284,42 +297,42 @@ public class BLS12_381Pairing
 
     /**
      * Adds the affine {@code Q = (xQ, yQ)} to {@code T = (X, Y, Z)} in place
-     * (mixed Jacobian addition, madd-2007-bl) and returns {@code f} times the
-     * line through {@code T} and {@code Q} evaluated at {@code P}.
+     * (homogeneous projective, mixed) and returns {@code f} times the line
+     * through {@code T} and {@code Q} evaluated at {@code P}.
      * <p>
-     * With {@code lambda = (yQ - y) / (xQ - x)} the untwisted line, multiplied
-     * by {@code w^3}, is {@code (lambda*xQ - yQ) - lambda*xP*v + yP*v*w}; scaled
-     * by {@code Z3 = 2*H*Z} (so {@code lambda * Z3 = r}) its coefficients are
-     * {@code r*xQ - yQ*Z3}, {@code -r*xP} and {@code Z3*yP}.
+     * With {@code theta = Y - yQ*Z}, {@code lambda = X - xQ*Z}, so that the
+     * slope is {@code theta / lambda}, the sum is {@code X3 = lambda*H},
+     * {@code Y3 = theta*(G - H) - E*Y}, {@code Z3 = Z*E}, where
+     * {@code E = lambda^3}, {@code G = X*lambda^2} and
+     * {@code H = E + Z*theta^2 - 2G}. The untwisted line, multiplied by
+     * {@code w^3}, is {@code (slope*xQ - yQ) - slope*xP*v + yP*v*w}; scaled by
+     * {@code lambda} its coefficients are {@code theta*xQ - lambda*yQ},
+     * {@code -theta*xP} and {@code lambda*yP}.
      */
     private static Fp12Element additionStep(Fp12Element f, Fp2Element[] t, Fp2Element xQ, Fp2Element yQ,
         BigInteger negXP, BigInteger yP)
     {
         Fp2Element x1 = t[0], y1 = t[1], z1 = t[2];
-        Fp2Element z1z1 = z1.square();
-        Fp2Element u2 = xQ.mul(z1z1);
-        Fp2Element s2 = yQ.mul(z1).mul(z1z1);
-        Fp2Element h = u2.sub(x1);
-        if (h.isZero())
+        Fp2Element theta = y1.sub(yQ.mul(z1));
+        Fp2Element lambda = x1.sub(xQ.mul(z1));
+        if (lambda.isZero())
         {
             // T = +-Q: impossible for Q of prime order r, since T = [k]Q with 1 < k < r.
             throw new ArithmeticException("Miller loop reached T = +-Q: G2 input not in the subgroup");
         }
-        Fp2Element hh = h.square();
-        Fp2Element i4 = hh.add(hh);
-        i4 = i4.add(i4);
-        Fp2Element j = h.mul(i4);
-        Fp2Element r = s2.sub(y1);
-        r = r.add(r);
-        Fp2Element v = x1.mul(i4);
-        Fp2Element x3 = r.square().sub(j).sub(v.add(v));
-        Fp2Element y1j = y1.mul(j);
-        Fp2Element y3 = r.mul(v.sub(x3)).sub(y1j.add(y1j));
-        Fp2Element z3 = z1.add(h).square().sub(z1z1).sub(hh);
+        Fp2Element c = theta.square();
+        Fp2Element d = lambda.square();
+        Fp2Element e = lambda.mul(d);
+        Fp2Element g = x1.mul(d);
+        Fp2Element h = e.add(z1.mul(c)).sub(g.add(g));
 
-        Fp2Element l0 = r.mul(xQ).sub(yQ.mul(z3));
-        Fp2Element l1 = r.mulFp(negXP);
-        Fp2Element l4 = z3.mulFp(yP);
+        Fp2Element x3 = lambda.mul(h);
+        Fp2Element y3 = theta.mul(g.sub(h)).sub(e.mul(y1));
+        Fp2Element z3 = z1.mul(e);
+
+        Fp2Element l0 = theta.mul(xQ).sub(lambda.mul(yQ));
+        Fp2Element l1 = theta.mulFp(negXP);
+        Fp2Element l4 = lambda.mulFp(yP);
 
         t[0] = x3;
         t[1] = y3;
