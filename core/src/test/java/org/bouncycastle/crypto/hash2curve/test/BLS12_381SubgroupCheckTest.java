@@ -107,7 +107,11 @@ public class BLS12_381SubgroupCheckTest
                 }
             }
         }
-        assertTrue(rejected >= 6 * 5);
+        // pt, -pt and [r]pt are always outside G1. The order-3 multiple vanishes
+        // when [r]pt has no 3-part (about a third of points), and the h/11
+        // multiple always vanishes, because the 11-torsion of E(Fp) is
+        // Z/11 x Z/11, so only these three per point are guaranteed.
+        assertTrue(rejected >= 6 * 3);
     }
 
     public void testG2GeneratorIsInSubgroup()
