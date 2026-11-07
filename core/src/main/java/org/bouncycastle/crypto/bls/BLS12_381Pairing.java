@@ -44,20 +44,20 @@ public class BLS12_381Pairing
     private static final BigInteger X = ABS_X.negate();
 
     /**
-     * {@code (x - 1)^2 / 3}, ~126 bits, used by the cube-factor-free hard
-     * part. The division is exact for the BLS12 family by construction.
+     * {@code (1 - x) / 3 = (|x| + 1) / 3}, 63 bits: the cube-factor-free hard
+     * part raises to {@code (x - 1)^2 / 3 = ((1 - x) / 3) * (|x| + 1)}. The
+     * division is exact for the BLS12 family by construction.
      */
-    private static final BigInteger X_MINUS_1_SQ_OVER_3;
+    private static final BigInteger ONE_MINUS_X_OVER_3;
 
     static
     {
-        BigInteger xMinus1Sq = X.subtract(BigInteger.ONE).pow(2);
-        BigInteger[] divRem = xMinus1Sq.divideAndRemainder(BigInteger.valueOf(3));
+        BigInteger[] divRem = BigInteger.ONE.subtract(X).divideAndRemainder(BigInteger.valueOf(3));
         if (divRem[1].signum() != 0)
         {
-            throw new IllegalStateException("(x - 1)^2 must be divisible by 3 for BLS12 family");
+            throw new IllegalStateException("1 - x must be divisible by 3 for BLS12 family");
         }
-        X_MINUS_1_SQ_OVER_3 = divRem[0];
+        ONE_MINUS_X_OVER_3 = divRem[0];
     }
 
     private BLS12_381Pairing()
@@ -183,8 +183,8 @@ public class BLS12_381Pairing
      * For the BLS12 family, {@code (x - 1)^2} is divisible by 3 by
      * construction (the curve parameterisation requires it for
      * {@code p(x)} to have integer coefficients), so the {@code /3}
-     * collapses into a precomputable ~126-bit integer that is applied
-     * via a single cyclotomic power by {@link #X_MINUS_1_SQ_OVER_3}.
+     * collapses into a precomputable ~126-bit integer, applied as a power
+     * by {@link #ONE_MINUS_X_OVER_3} followed by one by {@code |x| + 1}.
      * The remaining structure is the same as before, but the final
      * {@code +3} becomes {@code +1}, so we multiply by {@code f} rather
      * than {@code f^3}. Net cost is slightly higher than the cube-factored
@@ -208,15 +208,18 @@ public class BLS12_381Pairing
      * should use {@link #pair} / {@link #multiPair}.
      * <p>
      * {@code f} must lie in the cyclotomic subgroup, as the output of the easy
-     * part does: every power here squares with
-     * {@code Fp12Element.cyclotomicSquare}, which is wrong outside it.
+     * part does: every power here squares with the Granger-Scott or the
+     * compressed Karabina squaring of {@code Fp12Element}, both wrong outside it.
      */
     public static Fp12Element hardPart(Fp12Element f)
     {
-        // g0 = f^((x - 1)^2 / 3), via a direct ~126-bit power. This is
-        // the only step that differs from the 3*hard variant; it replaces
-        // f^((x - 1)^2) and absorbs the /3.
-        Fp12Element g0 = f.cyclotomicPow(X_MINUS_1_SQ_OVER_3);
+        // g0 = f^((x - 1)^2 / 3) = h^(|x| + 1) with h = f^((1 - x) / 3). This
+        // is the only step that differs from the 3*hard variant; it replaces
+        // f^((x - 1)^2) and absorbs the /3. The 63-bit (1 - x) / 3 is dense
+        // (28 set bits), so h uses the plain cyclotomic power; the power by
+        // the sparse |x| uses compressed squaring like expByX.
+        Fp12Element h = f.cyclotomicPow(ONE_MINUS_X_OVER_3);
+        Fp12Element g0 = h.cyclotomicPowCompressed(ABS_X).mul(h);
 
         // g1 = g0^(x + p) = g0^x * g0^p.
         Fp12Element g1 = expByX(g0).mul(g0.frobenius());
@@ -232,10 +235,11 @@ public class BLS12_381Pairing
     /**
      * In the cyclotomic subgroup of Fp&sup12;, inversion is conjugation. So
      * {@code f^x = f^(-|x|) = conjugate(f^|x|)} for our negative parameter x.
+     * The power uses Karabina's compressed squaring.
      */
     private static Fp12Element expByX(Fp12Element f)
     {
-        return f.cyclotomicPow(ABS_X).conjugate();
+        return f.cyclotomicPowCompressed(ABS_X).conjugate();
     }
 
     /**

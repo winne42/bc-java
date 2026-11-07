@@ -191,6 +191,122 @@ public final class Fp12Element
     }
 
     /**
+     * {@code this^e} for {@code this} in the cyclotomic subgroup and
+     * {@code e >= 0}, by Karabina's compressed squaring ("Squaring in
+     * cyclotomic subgroups", Math. Comp. 82, 2013; formulas as in Aranha,
+     * Karabina, Longa, Gebotys and L&oacute;pez, "Faster explicit formulas for
+     * computing pairings over ordinary curves", Eurocrypt 2011, sec. 5.2).
+     * <p>
+     * An element of the subgroup is determined by four of its six Fp^2
+     * coefficients, {@code g2, g3, g4, g5} in the numbering of
+     * {@link #cyclotomicSquare()}, and those four square among themselves in
+     * six Fp^2 squarings instead of nine. This squares the compressed form
+     * {@code bitLength(e) - 1} times, keeps {@code this^(2^i)} for each set
+     * bit i of e, decompresses them together (one Fp^2 inversion for all of
+     * them, by Montgomery's trick) and multiplies them. Decompression costs
+     * about as much as a few squarings, so this pays for sparse exponents
+     * such as |x| (six set bits in 64), not dense ones.
+     * <p>
+     * Decompression divides by {@code g2}; if any kept power has
+     * {@code g2 = 0} (the identity does, any other element with probability
+     * about {@code p^-2}) this falls back to {@link #cyclotomicPow}.
+     */
+    Fp12Element cyclotomicPowCompressed(BigInteger e)
+    {
+        int n = e.bitCount();
+        Fp2Element[][] kept = new Fp2Element[n][];
+        Fp2Element[] g = new Fp2Element[]{ c1.c0(), c0.c2(), c0.c1(), c1.c2() };
+        int k = 0;
+        for (int i = 0; i < e.bitLength(); ++i)
+        {
+            if (i > 0)
+            {
+                g = compressedSquare(g);
+            }
+            if (e.testBit(i))
+            {
+                kept[k++] = g;
+            }
+        }
+
+        // Batch inversion of the denominators 4 * g2 (Montgomery's trick).
+        Fp2Element[] prefix = new Fp2Element[n];
+        Fp2Element acc = Fp2Element.ONE;
+        for (int j = 0; j < n; ++j)
+        {
+            Fp2Element g2 = kept[j][0];
+            if (g2.isZero())
+            {
+                return cyclotomicPow(e);
+            }
+            Fp2Element d = g2.add(g2);
+            acc = acc.mul(d.add(d));
+            prefix[j] = acc;
+        }
+        Fp2Element inv = acc.inverse();
+
+        Fp12Element result = ONE;
+        for (int j = n - 1; j >= 0; --j)
+        {
+            Fp2Element g2 = kept[j][0];
+            Fp2Element dInv = j == 0 ? inv : inv.mul(prefix[j - 1]);
+            if (j > 0)
+            {
+                Fp2Element d = g2.add(g2);
+                inv = inv.mul(d.add(d));
+            }
+            Fp12Element power = decompress(kept[j], dInv);
+            result = j == n - 1 ? power : result.mul(power);
+        }
+        return result;
+    }
+
+    /**
+     * Karabina's squaring of a compressed element {@code [g2, g3, g4, g5]}:
+     * <pre>
+     *   h2 = 2 g2 + 3 xi (2 g4 g5)        h3 = 3 (g4^2 + xi g5^2) - 2 g3
+     *   h4 = 3 (g2^2 + xi g3^2) - 2 g4    h5 = 2 g5 + 3 (2 g2 g3)
+     * </pre>
+     * with {@code 2 gi gj = (gi + gj)^2 - gi^2 - gj^2}: six Fp^2 squarings,
+     * reduced once per output coefficient.
+     */
+    private static Fp2Element[] compressedSquare(Fp2Element[] g)
+    {
+        Fp2Element g2 = g[0], g3 = g[1], g4 = g[2], g5 = g[3];
+        Fp2Wide s2 = Fp2Wide.square(g2);
+        Fp2Wide s3 = Fp2Wide.square(g3);
+        Fp2Wide s4 = Fp2Wide.square(g4);
+        Fp2Wide s5 = Fp2Wide.square(g5);
+        Fp2Element t45 = s5.mulByNonResidue().add(s4).reduce();
+        Fp2Element t23 = s3.mulByNonResidue().add(s2).reduce();
+        Fp2Element m45 = Fp2Wide.square(g4.add(g5)).sub(s4).sub(s5).reduce();
+        Fp2Element m23 = Fp2Wide.square(g2.add(g3)).sub(s2).sub(s3).reduce();
+        return new Fp2Element[]{ triplePlusTwice(m45.mulByNonResidue(), g2), triplePlusTwice(t45, g3.neg()),
+            triplePlusTwice(t23, g4.neg()), triplePlusTwice(m23, g5) };
+    }
+
+    /**
+     * Recovers the full element from {@code [g2, g3, g4, g5]} given
+     * {@code dInv = (4 g2)^-1}:
+     * <pre>
+     *   g1 = (xi g5^2 + 3 g4^2 - 2 g3) / (4 g2)
+     *   g0 = xi (2 g1^2 + g2 g5 - 3 g3 g4) + 1
+     * </pre>
+     */
+    private static Fp12Element decompress(Fp2Element[] g, Fp2Element dInv)
+    {
+        Fp2Element g2 = g[0], g3 = g[1], g4 = g[2], g5 = g[3];
+        Fp2Wide s4 = Fp2Wide.square(g4);
+        Fp2Wide num = s4.add(s4).add(s4).add(Fp2Wide.square(g5).mulByNonResidue());
+        Fp2Element g1 = num.reduce().sub(g3.add(g3)).mul(dInv);
+        Fp2Wide s1 = Fp2Wide.square(g1);
+        Fp2Wide p34 = Fp2Wide.mul(g3, g4);
+        Fp2Element g0 = s1.add(s1).add(Fp2Wide.mul(g2, g5)).sub(p34.add(p34).add(p34)).mulByNonResidue().reduce()
+            .add(Fp2Element.ONE);
+        return new Fp12Element(Fp6Element.of(g0, g4, g3), Fp6Element.of(g2, g1, g5));
+    }
+
+    /**
      * Squaring via complex-style: (a0 + a1*w)^2 = (a0+a1)(a0+a1*v) - a0*a1 - a0*a1*v + 2*a0*a1*w.
      * Three Fp^6 multiplications versus four for the Karatsuba product.
      */

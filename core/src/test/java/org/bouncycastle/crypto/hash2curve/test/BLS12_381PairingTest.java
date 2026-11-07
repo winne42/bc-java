@@ -122,6 +122,16 @@ public class BLS12_381PairingTest
         assertEquals("hardPart chain must produce canonical f^hard_exp", direct, chain);
     }
 
+    /**
+     * The identity compresses to all zeros, so the compressed (Karabina)
+     * powers in the hard part cannot decompress it and must fall back to
+     * plain cyclotomic squaring.
+     */
+    public void testHardPartOfIdentity()
+    {
+        assertEquals(Fp12Element.ONE, BLS12_381Pairing.hardPart(Fp12Element.ONE));
+    }
+
     public void testBilinearityInG1()
     {
         BigInteger a = BigInteger.valueOf(7);
