@@ -216,8 +216,8 @@ public class BLS12_381Pairing
         // g0 = f^((x - 1)^2 / 3) = h^(|x| + 1) with h = f^((1 - x) / 3). This
         // is the only step that differs from the 3*hard variant; it replaces
         // f^((x - 1)^2) and absorbs the /3. The 63-bit (1 - x) / 3 is dense
-        // (28 set bits), so h uses the plain cyclotomic power; the power by
-        // the sparse |x| uses compressed squaring like expByX.
+        // (28 set bits), so h uses the Granger-Scott power over a width-4 NAF;
+        // the power by the sparse |x| uses compressed squaring like expByX.
         Fp12Element h = f.cyclotomicPow(ONE_MINUS_X_OVER_3);
         Fp12Element g0 = h.cyclotomicPowCompressed(ABS_X).mul(h);
 

@@ -2,6 +2,8 @@ package org.bouncycastle.crypto.bls;
 
 import java.math.BigInteger;
 
+import org.bouncycastle.math.ec.WNafUtil;
+
 /**
  * Immutable element of {@code Fp^12 = Fp^6[w] / (w^2 - v)}, the outer level
  * of the BLS12-381 pairing field tower.
@@ -173,18 +175,52 @@ public final class Fp12Element
 
     /**
      * {@code this^e} for {@code this} in the cyclotomic subgroup and
-     * {@code e >= 0}, by left-to-right square-and-multiply with
-     * {@link #cyclotomicSquare()}.
+     * {@code e >= 0}, left to right with {@link #cyclotomicSquare()} over the
+     * width-4 NAF of {@code e}: its digits are 0 or odd in {@code [-7, 7]},
+     * with at most one non-zero digit in any four consecutive ones. A
+     * negative digit multiplies by the conjugate of the precomputed odd power,
+     * which in the cyclotomic subgroup is its inverse. For the hard part's
+     * 63-bit {@code (|x| + 1) / 3} (28 set bits, the alternating pattern of
+     * {@code 0x5555} that a plain NAF cannot thin) this takes 16 Fp^12
+     * multiplications, precomputation included, instead of 27.
      */
     Fp12Element cyclotomicPow(BigInteger e)
     {
-        Fp12Element result = ONE;
-        for (int i = e.bitLength() - 1; i >= 0; --i)
+        byte[] digits = WNafUtil.generateWindowNaf(4, e);
+        if (digits.length == 0)
+        {
+            return ONE;
+        }
+        int maxDigit = 0;
+        for (int i = 0; i < digits.length; ++i)
+        {
+            maxDigit = Math.max(maxDigit, Math.abs(digits[i]));
+        }
+        // odd[j] = this^(2j + 1), as far as the digits need.
+        Fp12Element[] odd = new Fp12Element[(maxDigit + 1) / 2];
+        odd[0] = this;
+        if (odd.length > 1)
+        {
+            Fp12Element square = cyclotomicSquare();
+            for (int j = 1; j < odd.length; ++j)
+            {
+                odd[j] = odd[j - 1].mul(square);
+            }
+        }
+        // The most significant digit of a positive integer's NAF is positive.
+        int top = digits.length - 1;
+        Fp12Element result = odd[digits[top] >> 1];
+        for (int i = top - 1; i >= 0; --i)
         {
             result = result.cyclotomicSquare();
-            if (e.testBit(i))
+            int d = digits[i];
+            if (d > 0)
             {
-                result = result.mul(this);
+                result = result.mul(odd[d >> 1]);
+            }
+            else if (d < 0)
+            {
+                result = result.mul(odd[-d >> 1].conjugate());
             }
         }
         return result;
