@@ -9,13 +9,14 @@ import java.math.BigInteger;
  * Points are held in affine coordinates. {@link #add} and {@link #doublePoint}
  * work affinely, one {@link Fp2Element#inverse()} each; the two scalar
  * multiplications run in Jacobian coordinates ({@code x = X/Z^2},
- * {@code y = Y/Z^3}) with mixed additions of the affine base point, so they
- * need a single inversion, to return to affine form at the end.
+ * {@code y = Y/Z^3}) with mixed additions of affine points, so they need a
+ * single inversion to return to affine form at the end (plus one for the
+ * GLS table of {@link #constantTimeMultiply} on G2).
  * <p>
  * Two scalar-multiplication APIs are provided: {@link #multiply} is the
  * variable-time double-and-add — fast for public scalars (cofactor
  * clearing, subgroup checks) but unsafe for secret scalars; and
- * {@link #constantTimeMultiply} is a fixed-iteration ladder for use with
+ * {@link #constantTimeMultiply} has a fixed iteration pattern, for use with
  * secret scalars (e.g. {@code sk * H(msg)} in BLS sign).
  */
 public final class BLS12_381G2Point
@@ -127,12 +128,15 @@ public final class BLS12_381G2Point
      * Constant-time scalar multiplication, suitable for secret scalars
      * (e.g. {@code sk * H(msg)} in BLS sign).
      * <p>
-     * Uses a fixed-iteration "double, conditionally add" ladder over 256
-     * bits, with the conditional-add implemented as an array-indexed
-     * select rather than an {@code if}. Both branches of every iteration
-     * compute the same set of point operations regardless of the
-     * scalar-bit value, so the per-bit timing does not depend on
-     * the scalar.
+     * Points in G2 (the usual case, checked with
+     * {@link BLS12_381SubgroupCheck#isInG2Subgroup}, which looks only at the
+     * public point) use the GLS method, with four 64-bit digits and the
+     * endomorphism &psi; (64 doublings and 64 additions). Other points use a
+     * fixed-iteration
+     * "double, conditionally add" ladder over 256 bits. In both, the
+     * conditional addition is always computed and then chosen by an
+     * array-indexed select rather than an {@code if}, so every iteration
+     * performs the same point operations whatever the scalar bits.
      * <p>
      * <b>Caveats.</b> "Constant-time" here means the
      * scalar-bit-pattern-independent at the scalar-mult loop level.
@@ -162,6 +166,10 @@ public final class BLS12_381G2Point
         {
             return INFINITY;
         }
+        if (BLS12_381SubgroupCheck.isInG2Subgroup(this))
+        {
+            return constantTimeMultiplyInG2(scalar);
+        }
 
         // Fixed-width scalar handling: read 256 bits regardless of the
         // actual bit length of scalar, so the iteration count carries no
@@ -179,6 +187,109 @@ public final class BLS12_381G2Point
             r = options[bit];
         }
         return fromJacobian(r);
+    }
+
+    /**
+     * Constant-time scalar multiplication for a point known to be in G2, by
+     * the GLS method: &psi; acts on G2 as multiplication by the BLS parameter
+     * x = -|x|, and r = x^4 - x^2 + 1 &lt; |x|^4, so {@code k mod r} has four
+     * base-|x| digits below 2^64 and
+     * {@code [k] P = [k0] P - [k1] ψ(P) + [k2] ψ²(P) - [k3] ψ³(P)}. The four
+     * multiplications share 64 doublings, and each step adds one of the 15
+     * non-empty subset sums of the four base points from a table (always
+     * computed, an addition of a dummy entry when the digit bits are all
+     * zero, and chosen by an array-indexed select, as in
+     * {@link #constantTimeMultiply}): 64 doublings and 64 mixed additions
+     * instead of 256 of each. The caveats there apply here too.
+     * <p>
+     * The result is wrong for a point outside G2; callers must know the point
+     * is in G2, as hash-to-curve output is.
+     */
+    BLS12_381G2Point constantTimeMultiplyInG2(BigInteger scalar)
+    {
+        if (infinity)
+        {
+            return INFINITY;
+        }
+
+        long[] d = new long[4];
+        BigInteger k = scalar.mod(BLS12_381G2.ORDER);
+        for (int i = 0; i < 4; ++i)
+        {
+            BigInteger[] qr = k.divideAndRemainder(ABS_X);
+            d[i] = qr[1].longValue();
+            k = qr[0];
+        }
+
+        // Base points (-1)^i psi^i(P), since |x|^i = (-1)^i x^i.
+        BLS12_381G2Point[] base = new BLS12_381G2Point[4];
+        base[0] = this;
+        BLS12_381G2Point psi = this;
+        for (int i = 1; i < 4; ++i)
+        {
+            psi = BLS12_381SubgroupCheck.psiG2(psi);
+            base[i] = (i & 1) != 0 ? psi.negate() : psi;
+        }
+
+        // table[b] = sum of base[i] over the bits i of b, in Jacobian form, then
+        // all made affine with one inversion (Montgomery's trick).
+        Fp2Element[][] table = new Fp2Element[16][];
+        for (int b = 1; b < 16; ++b)
+        {
+            int low = b & -b;
+            int i = low == 1 ? 0 : low == 2 ? 1 : low == 4 ? 2 : 3;
+            table[b] = b == low
+                ? new Fp2Element[]{ base[i].x, base[i].y, Fp2Element.ONE }
+                : jacobianAddAffine(table[b ^ low], base[i].x, base[i].y);
+        }
+        Fp2Element[] tx = new Fp2Element[16];
+        Fp2Element[] ty = new Fp2Element[16];
+        toAffine(table, tx, ty);
+
+        Fp2Element[] r = JACOBIAN_INFINITY;
+        Fp2Element[][] options = new Fp2Element[2][];
+        for (int bit = 63; bit >= 0; --bit)
+        {
+            r = jacobianDouble(r);
+            int idx = (int)((d[0] >>> bit) & 1) | (int)((d[1] >>> bit) & 1) << 1
+                | (int)((d[2] >>> bit) & 1) << 2 | (int)((d[3] >>> bit) & 1) << 3;
+            // Entry 15 stands in for the empty sum, whose sum is then discarded.
+            int entry = idx | ((idx - 1) >>> 31) * 15;
+            options[0] = r;
+            options[1] = jacobianAddAffine(r, tx[entry], ty[entry]);
+            r = options[(idx | -idx) >>> 31];
+        }
+        return fromJacobian(r);
+    }
+
+    /**
+     * Converts {@code table[1..15]} from Jacobian to affine form with one
+     * inversion: the inverse of the product of all Z, then each Z's inverse
+     * from it and the prefix products (Montgomery's trick).
+     */
+    private static void toAffine(Fp2Element[][] table, Fp2Element[] tx, Fp2Element[] ty)
+    {
+        int n = table.length;
+        Fp2Element[] prefix = new Fp2Element[n];
+        Fp2Element acc = Fp2Element.ONE;
+        for (int b = 1; b < n; ++b)
+        {
+            if (table[b][2].isZero())
+            {
+                throw new IllegalStateException("point not in G2");
+            }
+            prefix[b] = acc;
+            acc = acc.mul(table[b][2]);
+        }
+        Fp2Element inv = acc.inverse();
+        for (int b = n - 1; b >= 1; --b)
+        {
+            Fp2Element zInv = inv.mul(prefix[b]);
+            inv = inv.mul(table[b][2]);
+            Fp2Element zInv2 = zInv.square();
+            tx[b] = table[b][0].mul(zInv2);
+            ty[b] = table[b][1].mul(zInv2).mul(zInv);
+        }
     }
 
     /**
@@ -207,6 +318,9 @@ public final class BLS12_381G2Point
         }
         return fromJacobian(r);
     }
+
+    /** |x| for the BLS parameter x = -0xd201000000010000; &psi; acts on G2 as [x]. */
+    private static final BigInteger ABS_X = new BigInteger("d201000000010000", 16);
 
     /** The point at infinity in Jacobian coordinates (any point with Z = 0). */
     private static final Fp2Element[] JACOBIAN_INFINITY = { Fp2Element.ONE, Fp2Element.ONE, Fp2Element.ZERO };

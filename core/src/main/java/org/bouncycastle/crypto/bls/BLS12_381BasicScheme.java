@@ -153,7 +153,7 @@ public class BLS12_381BasicScheme
         BLS12_381G2HashToCurve h = new BLS12_381G2HashToCurve(DST);
         BLS12_381G2Point q = h.hashToCurve(message);
         // Constant-time: sk is secret.
-        return q.constantTimeMultiply(sk);
+        return q.constantTimeMultiplyInG2(sk);
     }
 
     /**

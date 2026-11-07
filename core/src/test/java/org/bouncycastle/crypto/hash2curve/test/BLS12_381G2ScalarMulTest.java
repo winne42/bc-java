@@ -85,6 +85,55 @@ public class BLS12_381G2ScalarMulTest
         }
     }
 
+    /**
+     * On G2, {@code constantTimeMultiply} splits the scalar into four base-|x|
+     * digits and adds subset sums of P, -psi(P), psi^2(P), -psi^3(P) from a
+     * table. These scalars give digits that are zero in some columns (so the
+     * table entry is skipped), single-digit scalars that leave the
+     * accumulator at infinity for up to three quarters of the loop, digits at
+     * their maximum |x| - 1, equal digits (only entries 0 and 15), every one
+     * of the 16 entries, and scalars that only reduce mod r into range.
+     */
+    public void testGlsDigitPatterns()
+    {
+        BigInteger absX = new BigInteger("d201000000010000", 16);
+        BigInteger max = absX.subtract(BigInteger.ONE);
+        BLS12_381G2Point g = BLS12_381G2.getGenerator().multiply(new BigInteger(255, RNG));
+        BigInteger[][] digitSets = {
+            { BigInteger.ONE, BigInteger.ZERO, BigInteger.ZERO, BigInteger.ZERO },
+            { BigInteger.ZERO, BigInteger.ONE, BigInteger.ZERO, BigInteger.ZERO },
+            { BigInteger.ZERO, BigInteger.ZERO, BigInteger.ONE, BigInteger.ZERO },
+            { BigInteger.ZERO, BigInteger.ZERO, BigInteger.ZERO, BigInteger.ONE },
+            { max, max, max, BigInteger.ZERO },
+            { max, BigInteger.ZERO, max, BigInteger.ONE },
+            { BigInteger.valueOf(0x5a5a), BigInteger.valueOf(0x5a5a), BigInteger.valueOf(0x5a5a),
+                BigInteger.valueOf(0x5a5a) },
+            // Column j of these digits is the 4-bit number j mod 16: every table entry.
+            { BigInteger.valueOf(0xaaaaL), BigInteger.valueOf(0xccccL), BigInteger.valueOf(0xf0f0L),
+                BigInteger.valueOf(0xff00L) },
+            { new BigInteger(64, RNG).mod(absX), new BigInteger(64, RNG).mod(absX), new BigInteger(64, RNG).mod(absX),
+                new BigInteger(60, RNG) },
+        };
+        for (int i = 0; i < digitSets.length; ++i)
+        {
+            BigInteger k = BigInteger.ZERO;
+            for (int j = 3; j >= 0; --j)
+            {
+                k = k.multiply(absX).add(digitSets[i][j]);
+            }
+            assertTrue(k.compareTo(R) < 0);
+            check(g, k, true);
+        }
+        BigInteger[] reduced = { R.add(BigInteger.valueOf(7)), R.shiftLeft(3).add(BigInteger.ONE),
+            BigInteger.ONE.shiftLeft(300).subtract(BigInteger.ONE), absX.pow(4), absX.pow(4).subtract(BigInteger.ONE),
+            R.negate().subtract(BigInteger.valueOf(9)) };
+        for (int i = 0; i < reduced.length; ++i)
+        {
+            assertEquals("constantTimeMultiply by " + reduced[i], affineMultiply(g, reduced[i].mod(R)),
+                g.constantTimeMultiply(reduced[i]));
+        }
+    }
+
     public void testPointsOutsideSubgroup()
     {
         for (int i = 0; i < 3; ++i)
